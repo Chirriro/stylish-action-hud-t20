@@ -9,13 +9,22 @@ export class Tormenta20Adapter extends BaseSystemAdapter {
 
     _injectCustomCSS() {
         const styleId = "sah-t20-custom-style";
-        if (document.getElementById(styleId)) return;
+        const oldStyle = document.getElementById(styleId);
+        if (oldStyle) oldStyle.remove();
 
         const style = document.createElement("style");
         style.id = styleId;
         style.innerHTML = `
             .ib-sub-menu.t20-hide-tabs #ib-tabs-container { display: none !important; }
             .ib-sub-menu.t20-hide-tabs .ib-scroll-area { margin-top: 5px; }
+            div#ib-rich-tooltip {
+                max-width: 500px !important;
+                width: 100% !important;
+                max-height: 100% !important;
+            }
+            div#ib-rich-tooltip .editor-content {
+                font-size: 1.2rem !important;
+            }
         `;
         document.head.appendChild(style);
     }
@@ -85,7 +94,7 @@ export class Tormenta20Adapter extends BaseSystemAdapter {
 
             if (!items[sKey]) {
                 items[sKey] = {};
-                tabLabels[sKey] = circulo === "0" ? "Truques" : `${circulo}º Círculo`;
+                tabLabels[sKey] = circulo === "0" ? "Truques" : `${circulo}º Cír.`;
             }
 
             if (!items[sKey]["main"]) {
@@ -105,7 +114,6 @@ export class Tormenta20Adapter extends BaseSystemAdapter {
         });
 
         const sortedKeys = Object.keys(items).sort((a, b) => parseInt(a.replace('c', '')) - parseInt(b.replace('c', '')));
-        
         const sortedItems = {};
         const sortedLabels = {};
         const sortedSubLabels = {};
@@ -116,15 +124,7 @@ export class Tormenta20Adapter extends BaseSystemAdapter {
             sortedSubLabels[k] = subTabLabels[k];
         });
 
-        return {
-            title,
-            theme: "blue t20-hide-tabs", 
-            hasTabs: true,
-            hasSubTabs: true,
-            items: sortedItems,
-            tabLabels: sortedLabels,
-            subTabLabels: sortedSubLabels
-        };
+        return { title, theme: "blue t20-hide-tabs", hasTabs: true, hasSubTabs: true, items: sortedItems, tabLabels: sortedLabels, subTabLabels: sortedSubLabels };
     }
 
     _getAbilities(actor, title) {
@@ -144,32 +144,19 @@ export class Tormenta20Adapter extends BaseSystemAdapter {
         if (!skills) return { title, items: [] };
 
         const configPericias = CONFIG.TORMENTA20?.pericias || {};
-        
-        const attrLabels = {
-            all: "Tudo",
-            for: "FOR",
-            des: "DES",
-            con: "CON",
-            int: "INT",
-            sab: "SAB",
-            car: "CAR",
-            nula: "Geral"
-        };
+        const attrLabels = { all: "Tudo", for: "FOR", des: "DES", con: "CON", int: "INT", sab: "SAB", car: "CAR", nula: "Geral" };
         const attrOrder = ["all", "for", "des", "con", "int", "sab", "car", "nula"];
 
         const items = {};
         const tabLabels = {};
         const subTabLabels = {};
 
-        items["all"] = {};
+        items["all"] = { main: [] };
         tabLabels["all"] = "Tudo";
-        items["all"]["main"] = [];
-        subTabLabels["all"] = {};
-        subTabLabels["all"]["main"] = "";
+        subTabLabels["all"] = { main: "" };
 
         Object.entries(skills).forEach(([key, skill]) => {
             let fullName = configPericias[key] || skill.label || key.charAt(0).toUpperCase() + key.slice(1);
-
             let val = Number(skill.value); 
             if (isNaN(val)) val = 0;
             const sign = val >= 0 ? "+" : "";
@@ -186,18 +173,14 @@ export class Tormenta20Adapter extends BaseSystemAdapter {
 
             const attrKey = skill.atributo || "nula";
             if (!items[attrKey]) {
-                items[attrKey] = {};
+                items[attrKey] = { main: [] };
                 tabLabels[attrKey] = attrLabels[attrKey] || attrKey.toUpperCase();
-                items[attrKey]["main"] = [];
-                if (!subTabLabels[attrKey]) subTabLabels[attrKey] = {};
-                subTabLabels[attrKey]["main"] = ""; 
+                subTabLabels[attrKey] = { main: "" }; 
             }
             items[attrKey]["main"].push(itemData);
         });
 
-        Object.keys(items).forEach(key => {
-            items[key]["main"].sort((a, b) => a.name.localeCompare(b.name));
-        });
+        Object.keys(items).forEach(key => items[key]["main"].sort((a, b) => a.name.localeCompare(b.name)));
 
         const sortedItems = {};
         const sortedLabels = {};
@@ -211,26 +194,11 @@ export class Tormenta20Adapter extends BaseSystemAdapter {
             }
         });
 
-        return { 
-            title, 
-            theme: "green t20-hide-tabs", 
-            hasTabs: true,
-            hasSubTabs: true, 
-            items: sortedItems,
-            tabLabels: sortedLabels,
-            subTabLabels: sortedSubLabels
-        };
+        return { title, theme: "green t20-hide-tabs", hasTabs: true, hasSubTabs: true, items: sortedItems, tabLabels: sortedLabels, subTabLabels: sortedSubLabels };
     }
 
     _getInventory(actor, title) {
-        const categories = {
-            equipamento: "Equip.",
-            consumivel: "Consum.",
-            tesouro: "Tesouro",
-            arma: "Armas",
-            armadura: "Armaduras"
-        };
-
+        const categories = { equipamento: "Equip.", consumivel: "Consum.", tesouro: "Tesouro", arma: "Armas", armadura: "Armaduras" };
         const items = {};
         const tabLabels = {};
         const subTabLabels = {};
@@ -239,11 +207,10 @@ export class Tormenta20Adapter extends BaseSystemAdapter {
         actor.items.filter(i => validTypes.includes(i.type)).forEach(i => {
             const key = i.type;
             if (!items[key]) {
-                items[key] = {};
+                items[key] = { main: [] };
                 tabLabels[key] = categories[key] || key;
-                subTabLabels[key] = { "main": "" };
+                subTabLabels[key] = { main: "" };
             }
-            if (!items[key]["main"]) items[key]["main"] = [];
 
             const qtd = i.system.quantidade ?? i.system.qtd ?? 1;
 
@@ -256,24 +223,11 @@ export class Tormenta20Adapter extends BaseSystemAdapter {
             });
         });
 
-        Object.keys(items).forEach(k => {
-            if (items[k]["main"].length === 0) delete items[k];
-        });
-
-        return {
-            title,
-            theme: "red t20-hide-tabs",
-            hasTabs: true,
-            hasSubTabs: true,
-            items,
-            tabLabels,
-            subTabLabels
-        };
+        return { title, theme: "red t20-hide-tabs", hasTabs: true, hasSubTabs: true, items, tabLabels, subTabLabels };
     }
 
     _getUtility(actor, title) {
         const items = [];
-
         const initMod = Number(actor.system.iniciativa?.value ?? 0);
         const initSign = initMod >= 0 ? "+" : "";
         
@@ -285,15 +239,7 @@ export class Tormenta20Adapter extends BaseSystemAdapter {
             description: "Rolar Iniciativa"
         });
 
-        const attrMap = {
-            for: "Força",
-            des: "Destreza",
-            con: "Constituição",
-            int: "Inteligência",
-            sab: "Sabedoria",
-            car: "Carisma"
-        };
-
+        const attrMap = { for: "Força", des: "Destreza", con: "Constituição", int: "Inteligência", sab: "Sabedoria", car: "Carisma" };
         const attributes = actor.system.atributos;
         if (attributes) {
             Object.entries(attrMap).forEach(([key, label]) => {
@@ -313,7 +259,6 @@ export class Tormenta20Adapter extends BaseSystemAdapter {
                 }
             });
         }
-
         return { title, theme: "gray", items };
     }
 
