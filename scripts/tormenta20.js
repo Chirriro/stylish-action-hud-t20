@@ -29,6 +29,61 @@ export class Tormenta20Adapter extends BaseSystemAdapter {
         document.head.appendChild(style);
     }
 
+    getStats(actor, configAttributes) {
+        return configAttributes.map((attr) => {
+            const path = attr.path;
+            const raw = foundry.utils.getProperty(actor, path);
+
+            let value = 0;
+            let max = 0;
+            let temp = 0;
+
+            if (typeof raw === "object" && raw !== null && "value" in raw) {
+                value = Number(raw.value || 0);
+                max = Number(raw.max || 0);
+                temp = Number(raw.temp || 0);
+            } 
+            else {
+                value = Number(raw || 0);
+                if (path.endsWith(".value")) {
+                    const basePath = path.substring(0, path.lastIndexOf(".value"));
+                    const baseObj = foundry.utils.getProperty(actor, basePath);
+                    if (baseObj) {
+                        max = Number(baseObj.max || 0);
+                        temp = Number(baseObj.temp || 0);
+                    }
+                }
+            }
+
+            let percent = 0;
+            if (max > 0) percent = Math.clamp((value / max) * 100, 0, 100);
+            else percent = 100;
+
+            let tempPercent = 0;
+            if (max > 0 && temp > 0) {
+                tempPercent = Math.clamp((temp / max) * 100, 0, 100);
+            }
+
+            let displayValue = value;
+            if (attr.style === "bar" && max > 0) {
+                displayValue = `${value}/${max}`;
+            }
+
+            return {
+                path: attr.path,
+                label: attr.label,
+                color: attr.color,
+                style: attr.style,
+                icon: attr.icon,
+                value: displayValue,
+                max: max,
+                temp: temp,
+                percent: percent,
+                tempPercent: tempPercent
+            };
+        });
+    }
+
     getDefaultAttributes() {
         return [
             { path: "system.attributes.pv", label: "PV", color: "#e61c34", style: "bar" },
