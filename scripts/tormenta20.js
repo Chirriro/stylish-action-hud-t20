@@ -1,4 +1,4 @@
-import { BaseSystemAdapter } from "/modules/stylish-action-hud/scripts/systems/base.js";
+import { BaseSystemAdapter, configProps } from "/modules/stylish-action-hud/scripts/systems/base.js";
 
 export class Tormenta20Adapter extends BaseSystemAdapter {
     constructor() {
@@ -15,8 +15,11 @@ export class Tormenta20Adapter extends BaseSystemAdapter {
         const style = document.createElement("style");
         style.id = styleId;
         style.innerHTML = `
+            /* Hide Default T20 Tabs */
             .ib-sub-menu.t20-hide-tabs #ib-tabs-container { display: none !important; }
             .ib-sub-menu.t20-hide-tabs .ib-scroll-area { margin-top: 5px; }
+            
+            /* Enlarge Rich Tooltip */
             div#ib-rich-tooltip {
                 max-width: 500px !important;
                 width: 100% !important;
@@ -24,6 +27,19 @@ export class Tormenta20Adapter extends BaseSystemAdapter {
             }
             div#ib-rich-tooltip .editor-content {
                 font-size: 1.2rem !important;
+            }
+
+            /* Forces the temporary bar to display as an overlay when using custom images */
+            .theme-image .ib-bar-container.ib-bar-has-images > .ib-bar-temp {
+                display: block !important;
+                position: absolute;
+                top: 0; left: 0; bottom: 0;
+                background-color: rgba(255, 255, 255, 1) !important;
+                box-shadow: inset 0 0 10px rgba(255, 255, 255, 0.6) !important;
+                mix-blend-mode: overlay;
+                z-index: 5 !important;
+                pointer-events: none;
+                transition: width 0.4s ease-out !important;
             }
         `;
         document.head.appendChild(style);
@@ -65,27 +81,152 @@ export class Tormenta20Adapter extends BaseSystemAdapter {
             }
 
             let displayValue = value;
-            if (attr.style === "bar" && max > 0) {
+            let isNumberOrText = attr.style === "number" || attr.style === "text";
+
+            // Format Display Value for Number/Text styles to include (+NUMBER)
+            if (isNumberOrText) {
+                if (max > 0) {
+                    displayValue = `${value}/${max}`;
+                } else {
+                    displayValue = `${value}`;
+                }
+                
+                // Add Temporary Value Suffix
+                if (temp > 0) {
+                    displayValue += ` (+${temp})`;
+                }
+                
+                // Force max to 0 so the TemplateBuilder doesn't append /max again
+                max = 0; 
+            } 
+            else if (attr.style === "bar" && max > 0) {
                 displayValue = `${value}/${max}`;
             }
 
             return {
                 path: attr.path,
                 label: attr.label,
-                color: attr.color,
-                style: attr.style,
-                icon: attr.icon,
                 value: displayValue,
                 max: max,
                 temp: temp,
                 percent: percent,
-                tempPercent: tempPercent
+                tempPercent: tempPercent,
+                subtype: "resource",
+                ...configProps(attr) 
             };
         });
     }
 
+    // Overridden to manage Temporary PV/PM calculations
+    async updateAttribute(actor, path, input) {
+        const raw = foundry.utils.getProperty(actor, path);
+        const usesValue = raw && typeof raw === "object" && raw !== null && "value" in raw;
+        const currentRaw = usesValue ? raw.value : (foundry.utils.getProperty(actor, `${path}.value`) ?? raw);
+        const current = Number.isFinite(Number(currentRaw)) ? Number(currentRaw) : 0;
+        
+        let max = 0;
+        let temp = 0;
+        let hasTemp = false;
+
+        // Fetch Max Value
+        if (usesValue && raw.max !== undefined) {
+            max = Number(raw.max);
+        } else if (path.endsWith(".value")) {
+            max = Number(foundry.utils.getProperty(actor, path.replace(".value", ".max")) ?? 0);
+        } else {
+            max = Number(foundry.utils.getProperty(actor, `${path}.max`) ?? 0);
+        }
+        
+        // Fetch Temp Value
+        if (usesValue && raw.temp !== undefined) {
+            temp = Number(raw.temp);
+            hasTemp = true;
+        } else if (path.endsWith(".value")) {
+            const tempVal = foundry.utils.getProperty(actor, path.replace(".value", ".temp"));
+            if (tempVal !== undefined && tempVal !== null) {
+                temp = Number(tempVal);
+                hasTemp = true;
+            }
+        } else {
+            const tempVal = foundry.utils.getProperty(actor, `${path}.temp`);
+            if (tempVal !== undefined && tempVal !== null) {
+                temp = Number(tempVal);
+                hasTemp = true;
+            }
+        }
+
+        if (!Number.isFinite(max)) max = 0;
+        if (!Number.isFinite(temp)) temp = 0;
+
+        let delta = 0;
+        const inputStr = input.toString().trim();
+
+        if (inputStr.startsWith("+") || inputStr.startsWith("-")) {
+            delta = Number(inputStr);
+        } else {
+            delta = Number(inputStr) - current;
+        }
+
+        let newTemp = temp;
+        let newValue = current;
+
+        // Taking Damage or Spending Mana
+        if (delta < 0) {
+            let damage = Math.abs(delta);
+            
+            // Prioritize Temp Points
+            if (hasTemp && temp > 0) {
+                if (damage <= temp) {
+                    newTemp = temp - damage;
+                    damage = 0; // Temp absorbed all damage
+                } else {
+                    damage -= temp; // Temp broke, leftover damage carries over
+                    newTemp = 0;
+                }
+            }
+            newValue = current - damage;
+        } 
+        // Healing or Restoring Mana
+        else if (delta > 0) {
+            let heal = delta;
+            let missing = max > 0 ? max - current : 0;
+
+            if (max > 0) {
+                if (heal <= missing) {
+                    newValue = current + heal;
+                } else {
+                    newValue = max;
+                    // Any overheal spills over to become temporary points
+                    let excess = heal - missing;
+                    newTemp = temp + excess;
+                }
+            } else {
+                newValue = current + heal;
+            }
+        }
+
+        // Clamp
+        if (max > 0) {
+            newValue = Math.clamp(newValue, 0, max);
+        } else {
+            newValue = Math.max(0, newValue);
+        }
+
+        // Apply
+        const updates = {};
+        const targetPath = usesValue ? `${path}.value` : path;
+        updates[targetPath] = newValue;
+
+        if (hasTemp) {
+            const tempPath = usesValue ? `${path}.temp` : (path.endsWith(".value") ? path.replace(".value", ".temp") : `${path}.temp`);
+            updates[tempPath] = newTemp;
+        }
+
+        await actor.update(updates);
+    }
+
     getDefaultAttributes() {
-        return [
+        return[
             { path: "system.attributes.pv", label: "PV", color: "#e61c34", style: "bar" },
             { path: "system.attributes.pm", label: "PM", color: "#2b6cb0", style: "bar" },
             { path: "system.attributes.defesa.value", label: "Defesa", color: "#718096", style: "badge", icon: "fas fa-shield-alt" }
@@ -93,7 +234,7 @@ export class Tormenta20Adapter extends BaseSystemAdapter {
     }
 
     getDefaultLayout() {
-        return [
+        return[
             { systemId: "ataque", label: "Ataques", icon: "fas fa-swords", type: "submenu" },
             { systemId: "magia", label: "Magias", icon: "fas fa-magic", type: "submenu", useSidebar: true },
             { systemId: "poder", label: "Poderes", icon: "fas fa-fist-raised", type: "submenu" },
@@ -112,11 +253,11 @@ export class Tormenta20Adapter extends BaseSystemAdapter {
                 case "pericia": return this._getSkills(actor, menuData.label);
                 case "inventario": return this._getInventory(actor, menuData.label);
                 case "utilitario": return this._getUtility(actor, menuData.label);
-                default: return { title: menuData.label, items: [] };
+                default: return { title: menuData.label, items:[] };
             }
         } catch (e) {
             console.error("Stylish HUD T20 Error:", e);
-            return { title: "Erro", items: [] };
+            return { title: "Erro", items:[] };
         }
     }
 
@@ -141,7 +282,7 @@ export class Tormenta20Adapter extends BaseSystemAdapter {
         const subTabLabels = {};
 
         const spells = actor.items.filter(i => i.type === "magia");
-        if (spells.length === 0) return { title, theme: "blue", items: [] };
+        if (spells.length === 0) return { title, theme: "blue", items:[] };
         
         spells.forEach(spell => {
             const circulo = spell.system.circulo ? String(spell.system.circulo) : "0";
@@ -196,11 +337,11 @@ export class Tormenta20Adapter extends BaseSystemAdapter {
 
     _getSkills(actor, title) {
         const skills = actor.system.pericias;
-        if (!skills) return { title, items: [] };
+        if (!skills) return { title, items:[] };
 
         const configPericias = CONFIG.TORMENTA20?.pericias || {};
         const attrLabels = { all: "Tudo", for: "FOR", des: "DES", con: "CON", int: "INT", sab: "SAB", car: "CAR", nula: "Geral" };
-        const attrOrder = ["all", "for", "des", "con", "int", "sab", "car", "nula"];
+        const attrOrder =["all", "for", "des", "con", "int", "sab", "car", "nula"];
 
         const items = {};
         const tabLabels = {};
@@ -257,7 +398,7 @@ export class Tormenta20Adapter extends BaseSystemAdapter {
         const items = {};
         const tabLabels = {};
         const subTabLabels = {};
-        const validTypes = ["equipamento", "consumivel", "tesouro", "arma", "armadura"];
+        const validTypes =["equipamento", "consumivel", "tesouro", "arma", "armadura"];
 
         actor.items.filter(i => validTypes.includes(i.type)).forEach(i => {
             const key = i.type;
@@ -282,7 +423,7 @@ export class Tormenta20Adapter extends BaseSystemAdapter {
     }
 
     _getUtility(actor, title) {
-        const items = [];
+        const items =[];
         const initMod = Number(actor.system.iniciativa?.value ?? 0);
         const initSign = initMod >= 0 ? "+" : "";
         
